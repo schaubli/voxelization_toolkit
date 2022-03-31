@@ -11,8 +11,8 @@ set(CMAKE_BUILD_TYPE "RelWithDebInfo")
 set(Boost_NO_BOOST_CMAKE On)
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-    set(WIN_ARCH x64)
-	set(BITS 64)
+    set(WIN_ARCH Win32)
+	set(BITS 32)
 elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
     set(WIN_ARCH Win32)
 	set(BITS 32)
@@ -24,6 +24,8 @@ set(OCC_LIBRARY_NAMES TKernel TKMath TKBRep TKGeomBase TKGeomAlgo TKG3d TKG2d TK
 if(IFC_SUPPORT)
 add_definitions(-DWITH_IFC)
 endif()
+
+message(STATUS "IFCOPENSHELL_ROOT: ${IFCOPENSHELL_ROOT}")
 
 
 if(UNIX)
@@ -80,19 +82,21 @@ else()
 			if (${ifcopenshell_major_version} STREQUAL "0.7")
 				set(OCC_LIBRARY_DIR  ${IFCOPENSHELL_ROOT}/_deps-vs${MSVC_YEAR}-${WIN_ARCH}-installed/opencascade-7.5.3/win${BITS}/lib)
 			else()
-				set(OCC_LIBRARY_DIR  ${IFCOPENSHELL_ROOT}/_deps-vs${MSVC_YEAR}-${WIN_ARCH}-installed/opencascade-7.3.0p3/win${BITS}/lib)
+				set(OCC_LIBRARY_DIR  ${IFCOPENSHELL_ROOT}/_deps-vs${MSVC_YEAR}-${WIN_ARCH}-installed/opencascade-7.3.0/win${BITS}/lib)
 			endif()
         endif()
         if (${ifcopenshell_major_version} STREQUAL "0.7")   
 			set(OCC_INCLUDE_DIR  ${IFCOPENSHELL_ROOT}/_deps-vs${MSVC_YEAR}-${WIN_ARCH}-installed/opencascade-7.5.3/inc)
 		else()
 			set(OCC_INCLUDE_DIR  ${IFCOPENSHELL_ROOT}/_deps-vs${MSVC_YEAR}-${WIN_ARCH}-installed/oce/include/oce
-                             ${IFCOPENSHELL_ROOT}/_deps-vs${MSVC_YEAR}-${WIN_ARCH}-installed/opencascade-7.3.0p3/inc)			 
+                             ${IFCOPENSHELL_ROOT}/_deps-vs${MSVC_YEAR}-${WIN_ARCH}-installed/opencascade-7.3.0/inc)			 
 		endif()					 
 		
     else()
         file(TO_CMAKE_PATH "${OCC_LIBRARY_DIR}" OCC_LIBRARY_DIR)
     endif()
+
+    message(STATUS "OCC_INCLUDE_DIR: ${OCC_INCLUDE_DIR}")
     
 	add_definitions(-D_SCL_SECURE_NO_WARNINGS -D_CRT_SECURE_NO_WARNINGS -D_UNICODE)
     
@@ -166,8 +170,8 @@ if(UNIX)
     endif()
 else()
 	if (${ifcopenshell_major_version} STREQUAL "0.7")
-		SET(HDF5_INCLUDE_DIR ${IFCOPENSHELL_ROOT}/_deps-vs${MSVC_YEAR}-${WIN_ARCH}-installed/HDF5-1.8.22-win64/include)
-		SET(HDF5_LIBRARY_DIR ${IFCOPENSHELL_ROOT}/_deps-vs${MSVC_YEAR}-${WIN_ARCH}-installed/HDF5-1.8.22-win64/lib)
+		SET(HDF5_INCLUDE_DIR ${IFCOPENSHELL_ROOT}/_deps-vs${MSVC_YEAR}-${WIN_ARCH}-installed/HDF5-1.8.22-win32/include)
+		SET(HDF5_LIBRARY_DIR ${IFCOPENSHELL_ROOT}/_deps-vs${MSVC_YEAR}-${WIN_ARCH}-installed/HDF5-1.8.22-win32/lib)
 		
 		SET(HDF5_LIBRARIES 
 			"${HDF5_LIBRARY_DIR}/libhdf5_cpp.lib"
@@ -254,8 +258,8 @@ target_link_libraries(libvoxel ${IFC_LIBRARIES} ${ICU_LIBRARIES} ${Boost_LIBRARI
 
 set(LIBVOXEC_HEADER_FILES voxelfile.h voxec.h)
 set(LIBVOXEC_SOURCE_FILES voxec.cpp)
-add_library(libvoxec STATIC ${LIBVOXEC_HEADER_FILES} ${LIBVOXEC_SOURCE_FILES})
-target_link_libraries(libvoxec libvoxel)
+# add_library(libvoxec STATIC ${LIBVOXEC_HEADER_FILES} ${LIBVOXEC_SOURCE_FILES})
+# target_link_libraries(libvoxec libvoxel)
 
 if (ENABLE_TESTS)
 file(GLOB test_filenames tests/*.cpp)
@@ -271,11 +275,11 @@ foreach(filename ${test_filenames})
 endforeach()
 endif()
 
-add_executable(voxec voxec_main.cpp progress.h)
-target_link_libraries(voxec libvoxec)
+# add_executable(voxec voxec_main.cpp progress.h)
+# target_link_libraries(voxec libvoxec)
 
-install(TARGETS voxec libvoxel libvoxec
+install(TARGETS libvoxel # voxec libvoxec
     RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
     LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
     ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
-install(FILES ${LIBVOXELIZER_HEADER_FILES} ${LIBVOXEC_HEADER_FILES} DESTINATION ${CMAKE_INSTALL_PREFIX}/include/voxel)
+install(FILES ${LIBVOXELIZER_HEADER_FILES} DESTINATION ${CMAKE_INSTALL_PREFIX}/include/voxel)

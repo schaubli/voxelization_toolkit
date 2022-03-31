@@ -1,0 +1,47 @@
+﻿{
+  "configurations": [
+    {
+      "name": "x64-RelWithDebInfo",
+      "generator": "Ninja",
+      "configurationType": "RelWithDebInfo",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "buildRoot": "${projectDir}\\out\\build\\${name}",
+      "installRoot": "${projectDir}\\out\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "variables": [
+        {
+          "name": "CMAKE_BUILD_TYPE",
+          "value": "RelWithDebInfo",
+          "type": "STRING"
+        },
+        {
+          "name": "CMAKE_INSTALL_PREFIX",
+          "value": "C:/Users/LinusSchaub/BIMCheck/whereami/voxelization_toolkit/out/install/x64-RelWithDebInfo",
+          "type": "PATH"
+        },
+        {
+          "name": "INSTALL_GTEST",
+          "value": "False",
+          "type": "BOOL"
+        },
+        {
+          "name": "IFCOPENSHELL_ROOT",
+          "value": "../IfcOpenShell",
+          "type": "PATH"
+        },
+        {
+          "name": "ENABLE_TESTS",
+          "value": "False",
+          "type": "BOOL"
+        },
+        {
+          "name": "BUILD_TESTING",
+          "value": "False",
+          "type": "BOOL"
+        }
+      ]
+    }
+  ]
+}
