@@ -278,7 +278,7 @@ endif()
 add_executable(voxec voxec_main.cpp progress.h)
 target_link_libraries(voxec libvoxec)
 
-install(TARGETS libvoxel # voxec libvoxec
+install(TARGETS libvoxel voxec libvoxec
     RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
     LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
     ARCHIVE DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
