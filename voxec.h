@@ -47,6 +47,7 @@ struct filtered_files_t {};
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepPrimAPI_MakeHalfSpace.hxx>
 
 #include <set>
 #include <map>
@@ -287,7 +288,7 @@ public:
 class op_create_geometry : public voxel_operation {
 public:
 	const std::vector<argument_spec>& arg_names() const {
-		static std::vector<argument_spec> nm_ = { { true, "input", "ifcfile" }, { false, "include", "sequence"}, { false, "exclude", "sequence"}, { false, "optional", "integer"} };
+		static std::vector<argument_spec> nm_ = { { true, "input", "ifcfile" }, { false, "include", "sequence"}, { false, "exclude", "sequence"}, { false, "optional", "integer"}, { false, "only_transparent", "integer"}, { false, "only_opaque", "integer"} };
 		return nm_;
 	}
 		
@@ -302,6 +303,9 @@ public:
 				threads = (size_t)t;
 			}
 		}
+
+		bool only_transparent = scope.get_value_or<int>("only_transparent", 0) == 1;
+		bool only_opaque = scope.get_value_or<int>("only_opaque", 0) == 1;
 
 #ifdef IFCOPENSHELL_05
 		auto ifc_roof = IfcSchema::Type::IfcRoof;
@@ -326,10 +330,13 @@ public:
 
 		IfcGeom::IteratorSettings settings_surface;
 		settings_surface.set(IfcGeom::IteratorSettings::DISABLE_TRIANGULATION, true);
-		settings_surface.set(IfcGeom::IteratorSettings::USE_WORLD_COORDS, true);
+		// settings_surface.set(IfcGeom::IteratorSettings::USE_WORLD_COORDS, true);
 		// Only to determine whether building element parts decompositions of slabs should be processed as roofs
+#ifdef IFCOPENSHELL_07
+		settings_surface.set(IfcGeom::IteratorSettings::ELEMENT_HIERARCHY, true);
+#else
 		settings_surface.set(IfcGeom::IteratorSettings::SEARCH_FLOOR, true);
-		
+#endif
 
 		boost::optional<bool> include, roof_slabs;
 		std::vector<std::string> entities;
@@ -395,10 +402,25 @@ public:
 
 		for (auto ifc_file : ifc_files.files) {
 
-			std::unique_ptr<IfcGeom::Iterator<double>> iterator;
+#ifdef IFCOPENSHELL_07
+		std::unique_ptr<IfcGeom::Iterator> iterator;
+#else
+		std::unique_ptr<IfcGeom::Iterator<double>> iterator;
+#endif
+
 
 #ifdef IFCOPENSHELL_05
 			iterator.reset(IfcGeom::Iterator<double>(settings_surface, ifc_file, filters_surface));
+
+
+#elif IFCOPENSHELL_07
+
+			if (threads) {
+				iterator.reset(new IfcGeom::Iterator(settings_surface, ifc_file, filters_surface, *threads));
+			}
+			else {
+				iterator.reset(new IfcGeom::Iterator(settings_surface, ifc_file, filters_surface));
+			}
 #else
 			if (threads) {
 				iterator.reset(new IfcGeom::Iterator<double>(settings_surface, ifc_file, filters_surface, *threads));
@@ -467,8 +489,32 @@ public:
 
 				if (process) {
 					TopoDS_Compound compound = elem->geometry().as_compound();
-					BRepMesh_IncrementalMesh(compound, 0.001);
-					geometries->push_back(std::make_pair(elem->id(), compound));
+					
+					bool filtered_non_empty = true;
+					if (only_transparent || only_opaque) {
+						filtered_non_empty = false;
+						TopoDS_Compound filtered;
+						BRep_Builder B;
+						B.MakeCompound(filtered);
+
+						auto it = elem->geometry().begin();
+						for (TopoDS_Iterator jt(compound); jt.More(); ++it, jt.Next()) {
+							bool is_transparent = it->hasStyle() && it->Style().Transparency().get_value_or(0.0) > 1.e-9;
+							if (only_transparent == is_transparent) {
+								B.Add(filtered, jt.Value());
+								filtered_non_empty = true;
+							}
+						}
+
+						std::swap(compound, filtered);
+					}
+
+					if (filtered_non_empty) {
+						compound.Move(elem->transformation().data());
+
+						BRepMesh_IncrementalMesh(compound, 0.001);
+						geometries->push_back(std::make_pair(elem->id(), compound));
+					}
 				}
 
 				if (old_progress != iterator->progress()) {
@@ -1215,6 +1261,7 @@ public:
 	}
 };
 
+template <int plane_or_halfspace=0>
 class op_plane : public voxel_operation {
 public:
 	const std::vector<argument_spec>& arg_names() const {
@@ -1278,16 +1325,31 @@ public:
 		auto face = BRepBuilderAPI_MakeFace(pln,
 			uv_min_max[0][0], uv_min_max[1][0],
 			uv_min_max[0][1], uv_min_max[1][1]
-		);
+		).Face();
 
-		auto face_inside = BRepAlgoAPI_Common(face, box).Shape();
+		TopoDS_Shape bool_result;
+
+		if (plane_or_halfspace == 0) {
+			bool_result = BRepAlgoAPI_Common(face, box).Shape();
+		} else {
+			BRepGProp_Face prop(face);
+			double u1, u2, v1, v2;
+			prop.Bounds(u1, u2, v1, v2);
+			gp_Pnt p;
+			gp_Vec v;
+			prop.Normal((u1 + u2) / 2., (v1 + v2) / 2, p, v);
+			// mass opposite of normal
+			BRepPrimAPI_MakeHalfSpace mhs(face, p.XYZ() - v.XYZ());
+			bool_result = BRepAlgoAPI_Common(box, mhs.Solid()).Shape();
+		}
+
 		TopoDS_Compound C;
-		if (face_inside.ShapeType() == TopAbs_COMPOUND) {
-			C = TopoDS::Compound(face_inside);
+		if (bool_result.ShapeType() == TopAbs_COMPOUND) {
+			C = TopoDS::Compound(bool_result);
 		} else {
 			BRep_Builder B;
 			B.MakeCompound(C);
-			B.Add(C, face_inside);
+			B.Add(C, bool_result);
 		}
 
 		BRepMesh_IncrementalMesh(C, 0.001);
@@ -1687,6 +1749,72 @@ public:
 	}
 };
 
+class op_repeat_slice : public voxel_operation {
+public:
+	const std::vector<argument_spec>& arg_names() const {
+		static std::vector<argument_spec> nm_ = { { true, "input", "voxels" }, {true, "axis", "integer"}, {true, "location", "real"}, {true, "repetitions", "integer"} };
+		return nm_;
+	}
+	symbol_value invoke(const scope_map& scope) const {
+		auto voxels = (chunked_voxel_storage<bit_t>*)scope.get_value<abstract_voxel_storage*>("input");
+		
+		auto grid_offset = voxels->grid_offset();
+		auto num_chunks = voxels->num_chunks();
+
+		auto axis = scope.get_value<int>("axis");
+		auto location = scope.get_value<double>("location");
+		auto repetitions = scope.get_value<int>("repetitions");
+		size_t location_i = (size_t) std::floor((location - voxels->origin().get(axis)) / voxels->voxel_size());
+
+		vec_n<3, size_t> offset = make_vec<size_t>(0, 0, 0);
+		vec_n<3, size_t> offset_after_repeat = make_vec<size_t>(0, 0, 0);
+		offset_after_repeat.get(axis) = (size_t)std::abs(repetitions);
+
+		if (repetitions < 0) {
+			size_t d = integer_ceil_div((size_t)-repetitions, voxels->chunk_size());
+			grid_offset.get(axis) -= d;
+			num_chunks.get(axis) += d;
+			offset.get(axis) = d * voxels->chunk_size();
+		} else if (repetitions > 0) {
+			num_chunks.get(axis) += integer_ceil_div((size_t)repetitions, voxels->chunk_size());
+		}
+
+		abstract_chunked_voxel_storage* output = new chunked_voxel_storage<bit_t>(
+			grid_offset,
+			voxels->voxel_size(),
+			voxels->chunk_size(),
+			num_chunks
+		);
+
+		for (auto it = voxels->begin(); it != voxels->end(); ++it) {
+			if ((*it).get(axis) < location_i) {
+				if (repetitions < 0) {
+					output->Set(offset + (*it) - offset_after_repeat);
+				} else {
+					output->Set(offset + (*it));
+				}
+			} else if ((*it).get(axis) == location_i) {
+				auto ijk = offset + (*it);
+				if (repetitions < 0) {
+					ijk -= offset_after_repeat;
+				}
+				for (size_t i = 0; i <= (size_t) std::abs(repetitions); ++i) {
+					auto ijk2 = ijk;
+					ijk2.get(axis) += i;
+					output->Set(ijk2);
+				}
+			} else { // greater than
+				if (repetitions < 0) {
+					output->Set(offset + (*it));
+				} else {
+					output->Set(offset + (*it) + offset_after_repeat);
+				}
+			}
+		}
+
+		return output;
+	}
+};
 
 #ifdef WITH_IFC
 
@@ -1771,7 +1899,7 @@ namespace {
 						if (rel->declaration().is("IfcRelDefinesByProperties")) {
 							IfcUtil::IfcBaseClass* pset = *((IfcUtil::IfcBaseEntity*)rel)->get("RelatingPropertyDefinition");
 							if (pset->declaration().is("IfcPropertySet")) {
-								IfcEntityList::ptr props = *((IfcUtil::IfcBaseEntity*)pset)->get("HasProperties");
+								aggregate_of_instance::ptr props = *((IfcUtil::IfcBaseEntity*)pset)->get("HasProperties");
 								for (auto& prop : *props) {
 									if (prop->declaration().is("IfcPropertySingleValue")) {
 										auto name = (std::string) *((IfcUtil::IfcBaseEntity*)prop)->get("Name");
@@ -1933,6 +2061,47 @@ public:
 	}
 };
 
+template <int sweep_or_move>
+class op_local_sweep : public voxel_operation {
+public:
+	const std::vector<argument_spec>& arg_names() const {
+		static std::vector<argument_spec> nm_ = { { true, "input", "surfaceset" }, { true, "dx", "real"}, { true, "dy", "real"}, { true, "dz", "real"}, {false, "VOXELSIZE", "real"} };
+		return nm_;
+	}
+	symbol_value invoke(const scope_map& scope) const {
+		geometry_collection_t* surfaces = scope.get_value<geometry_collection_t*>("input");
+		auto dx = scope.get_value<double>("dx");
+		auto dy = scope.get_value<double>("dy");
+		auto dz = scope.get_value<double>("dz");
+		auto vs = scope.get_value<double>("VOXELSIZE");
+
+		auto l = gp_Vec(dx, dy, dz).Magnitude();
+		size_t n = (size_t)std::ceil(l / vs);
+		double stp = l / n;
+		
+		auto copy = new geometry_collection_t;
+		// note n inclusive
+		for (int i = sweep_or_move == 0 ? 0 : n; i <= n; ++i) {
+			auto s = copy->size();
+			copy->insert(copy->end(), surfaces->begin(), surfaces->end());
+			if (i == 0) {
+				// no sense in applying the zero length translation
+				continue;
+			}
+			for (auto it = copy->begin() + s; it != copy->end(); ++it) {
+				gp_Trsf trsf;
+				trsf.SetTranslation(gp_Vec(dx * stp * i, dy * stp * i, dz * stp * i));
+
+				it->second.Location(
+					it->second.Location().Transformation() * trsf
+				);
+			}
+		}
+		return copy;
+	}
+};
+
+template <int mode=0>
 class op_export_csv : public voxel_operation {
 public:
 	const std::vector<argument_spec>& arg_names() const {
@@ -1944,13 +2113,16 @@ public:
 		auto filename = scope.get_value<std::string>("filename");
 		std::ofstream ofs(filename.c_str());
 
-		bool use_value = voxels->value_bits() == 32;
+		bool use_value = mode == 0 && voxels->value_bits() == 32;
 
 		auto sz = dynamic_cast<abstract_chunked_voxel_storage*>(voxels)->voxel_size();
 		auto szl = (long)dynamic_cast<abstract_chunked_voxel_storage*>(voxels)->chunk_size();
 		auto left = dynamic_cast<abstract_chunked_voxel_storage*>(voxels)->grid_offset();
 
 		uint32_t v;
+
+		std::string prefix = mode == 0 ? "" : "v ";
+		std::string sep = mode == 0 ? "," : " ";
 
 		for (auto ijk : *voxels) {
 			if (use_value) {
@@ -1963,12 +2135,13 @@ public:
 
 			auto xyz = (ijk.as<long>() + left * szl).as<double>() * sz;
 			
-			ofs << xyz.get<0>() << ","
-				<< xyz.get<1>() << ","
+			ofs << prefix
+				<< xyz.get<0>() << sep
+				<< xyz.get<1>() << sep
 				<< xyz.get<2>();
 			
 			if (use_value) {
-				ofs << "," << v;
+				ofs << sep << v;
 			}
 
 			ofs << "\n";
